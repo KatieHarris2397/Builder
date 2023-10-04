@@ -57,9 +57,63 @@ func Npm() {
 
 	//install dependencies/build, if yaml build type exists install accordingly
 	buildTool := strings.ToLower(os.Getenv("BUILDER_BUILD_TOOL"))
+	preBuildCmd := os.Getenv("BUILDER_PREBUILD_COMMAND")
 	buildCmd := os.Getenv("BUILDER_BUILD_COMMAND")
 
 	var cmd *exec.Cmd
+
+	// If a pre-build command is provided execute it
+	if preBuildCmd != "" {
+		//user specified cmd
+		preBuildCmdArray := strings.Fields(preBuildCmd)
+		cmd = exec.Command(preBuildCmdArray[0], preBuildCmdArray[1:]...)
+		cmd.Dir = fullPath // or whatever directory it's in
+
+		//run pre-build cmd, check for err, log pre-build cmd
+		spinner.LogMessage("running command: "+cmd.String(), "info")
+
+		preBuildStdout, pipeErr := cmd.StdoutPipe()
+		if pipeErr != nil {
+			spinner.LogMessage(pipeErr.Error(), "fatal")
+		}
+
+		cmd.Stderr = cmd.Stdout
+
+		// Make a new channel which will be used to ensure we get all output
+		preBuildDone := make(chan struct{})
+
+		preBuildScanner := bufio.NewScanner(preBuildStdout)
+
+		// Use the scanner to scan the output line by line and log it
+		// It's running in a goroutine so that it doesn't block
+		go func() {
+			// Read line by line and process it
+			for preBuildScanner.Scan() {
+				line := preBuildScanner.Text()
+				// Have to stop spinner or it will get printed with log to console
+				spinner.Spinner.Stop()
+				locallogger.Info(line)
+				spinner.Spinner.Start()
+			}
+
+			// We're all done, unblock the channel
+			preBuildDone <- struct{}{}
+
+		}()
+
+		if err := cmd.Start(); err != nil {
+			spinner.LogMessage(err.Error(), "fatal")
+		}
+
+		// Wait for all output to be processed
+		<-preBuildDone
+
+		// Wait for cmd to finish
+		if err := cmd.Wait(); err != nil {
+			spinner.LogMessage(err.Error(), "fatal")
+		}
+	}
+
 	if buildCmd != "" {
 		//user specified cmd
 		buildCmdArray := strings.Fields(buildCmd)
