@@ -56,85 +56,20 @@ func Npm() {
 	}
 
 	//install dependencies/build, if yaml build type exists install accordingly
-	buildTool := strings.ToLower(os.Getenv("BUILDER_BUILD_TOOL"))
-	preBuildCmd := os.Getenv("BUILDER_PREBUILD_COMMAND")
+	//buildTool := strings.ToLower(os.Getenv("BUILDER_BUILD_TOOL"))
 	buildCmd := os.Getenv("BUILDER_BUILD_COMMAND")
+	framework := strings.ToLower(os.Getenv("BUILDER_FRAMEWORK"))
 
 	var cmd *exec.Cmd
 
-	// If a pre-build command is provided execute it
-	if preBuildCmd != "" {
-		//user specified cmd
-		preBuildCmdArray := strings.Fields(preBuildCmd)
-		cmd = exec.Command(preBuildCmdArray[0], preBuildCmdArray[1:]...)
-		cmd.Dir = fullPath // or whatever directory it's in
+	// Run npm install
+	cmd = exec.Command("npm", "install")
+	cmd.Dir = fullPath // or whatever directory it's in
 
-		//run pre-build cmd, check for err, log pre-build cmd
-		spinner.LogMessage("running command: "+cmd.String(), "info")
-
-		preBuildStdout, pipeErr := cmd.StdoutPipe()
-		if pipeErr != nil {
-			spinner.LogMessage(pipeErr.Error(), "fatal")
-		}
-
-		cmd.Stderr = cmd.Stdout
-
-		// Make a new channel which will be used to ensure we get all output
-		preBuildDone := make(chan struct{})
-
-		preBuildScanner := bufio.NewScanner(preBuildStdout)
-
-		// Use the scanner to scan the output line by line and log it
-		// It's running in a goroutine so that it doesn't block
-		go func() {
-			// Read line by line and process it
-			for preBuildScanner.Scan() {
-				line := preBuildScanner.Text()
-				// Have to stop spinner or it will get printed with log to console
-				spinner.Spinner.Stop()
-				locallogger.Info(line)
-				spinner.Spinner.Start()
-			}
-
-			// We're all done, unblock the channel
-			preBuildDone <- struct{}{}
-
-		}()
-
-		if err := cmd.Start(); err != nil {
-			spinner.LogMessage(err.Error(), "fatal")
-		}
-
-		// Wait for all output to be processed
-		<-preBuildDone
-
-		// Wait for cmd to finish
-		if err := cmd.Wait(); err != nil {
-			spinner.LogMessage(err.Error(), "fatal")
-		}
-	}
-
-	if buildCmd != "" {
-		//user specified cmd
-		buildCmdArray := strings.Fields(buildCmd)
-		cmd = exec.Command(buildCmdArray[0], buildCmdArray[1:]...)
-		cmd.Dir = fullPath // or whatever directory it's in
-	} else if buildTool == "npm" {
-		cmd = exec.Command("npm", "install")
-		cmd.Dir = fullPath // or whatever directory it's in
-		os.Setenv("BUILDER_BUILD_COMMAND", "npm install")
-	} else {
-		//default
-		cmd = exec.Command("npm", "install")
-		cmd.Dir = fullPath // or whatever directory it's in
-		os.Setenv("BUILDER_BUILD_TOOL", "npm")
-		os.Setenv("BUILDER_BUILD_COMMAND", "npm install")
-	}
-
-	//run cmd, check for err, log cmd
+	//run pre-build cmd, check for err, log pre-build cmd
 	spinner.LogMessage("running command: "+cmd.String(), "info")
 
-	stdout, pipeErr := cmd.StdoutPipe()
+	preBuildStdout, pipeErr := cmd.StdoutPipe()
 	if pipeErr != nil {
 		spinner.LogMessage(pipeErr.Error(), "fatal")
 	}
@@ -142,23 +77,24 @@ func Npm() {
 	cmd.Stderr = cmd.Stdout
 
 	// Make a new channel which will be used to ensure we get all output
-	done := make(chan struct{})
+	preBuildDone := make(chan struct{})
 
-	scanner := bufio.NewScanner(stdout)
+	preBuildScanner := bufio.NewScanner(preBuildStdout)
 
 	// Use the scanner to scan the output line by line and log it
 	// It's running in a goroutine so that it doesn't block
 	go func() {
 		// Read line by line and process it
-		for scanner.Scan() {
-			line := scanner.Text()
+		for preBuildScanner.Scan() {
+			line := preBuildScanner.Text()
+			// Have to stop spinner or it will get printed with log to console
 			spinner.Spinner.Stop()
 			locallogger.Info(line)
 			spinner.Spinner.Start()
 		}
 
 		// We're all done, unblock the channel
-		done <- struct{}{}
+		preBuildDone <- struct{}{}
 
 	}()
 
@@ -169,14 +105,82 @@ func Npm() {
 	}
 
 	// Wait for all output to be processed
-	<-done
+	<-preBuildDone
 
 	// Wait for cmd to finish
 	if err := cmd.Wait(); err != nil {
 		spinner.LogMessage(err.Error(), "fatal")
 	}
 
-	os.Setenv("BUILD_END_TIME", time.Now().Format(time.RFC850))
+	// If no framework provided we are just running npm install so capture end time
+	if framework == "" {
+		os.Setenv("BUILD_END_TIME", time.Now().Format(time.RFC850))
+	}
+
+	// If framework provided, run build command
+	if framework != "" {
+		if buildCmd != "" {
+			//user specified cmd
+			buildCmdArray := strings.Fields(buildCmd)
+			cmd = exec.Command(buildCmdArray[0], buildCmdArray[1:]...)
+			cmd.Dir = fullPath // or whatever directory it's in
+		} else if framework == "react" {
+			cmd = exec.Command("npm", "run", "build")
+			cmd.Dir = fullPath // or whatever directory it's in
+			os.Setenv("BUILDER_BUILD_COMMAND", "npm run build")
+		} else {
+			//default
+			cmd = exec.Command("npm", "run", "build")
+			cmd.Dir = fullPath // or whatever directory it's in
+			os.Setenv("BUILDER_BUILD_TOOL", "npm")
+			os.Setenv("BUILDER_BUILD_COMMAND", "npm run build")
+		}
+
+		//run cmd, check for err, log cmd
+		spinner.LogMessage("running command: "+cmd.String(), "info")
+
+		stdout, pipeErr := cmd.StdoutPipe()
+		if pipeErr != nil {
+			spinner.LogMessage(pipeErr.Error(), "fatal")
+		}
+
+		cmd.Stderr = cmd.Stdout
+
+		// Make a new channel which will be used to ensure we get all output
+		done := make(chan struct{})
+
+		scanner := bufio.NewScanner(stdout)
+
+		// Use the scanner to scan the output line by line and log it
+		// It's running in a goroutine so that it doesn't block
+		go func() {
+			// Read line by line and process it
+			for scanner.Scan() {
+				line := scanner.Text()
+				spinner.Spinner.Stop()
+				locallogger.Info(line)
+				spinner.Spinner.Start()
+			}
+
+			// We're all done, unblock the channel
+			done <- struct{}{}
+
+		}()
+
+		if err := cmd.Start(); err != nil {
+			spinner.LogMessage(err.Error(), "fatal")
+		}
+
+		// Wait for all output to be processed
+		<-done
+
+		// Wait for cmd to finish
+		if err := cmd.Wait(); err != nil {
+			spinner.LogMessage(err.Error(), "fatal")
+		}
+
+		os.Setenv("BUILD_END_TIME", time.Now().Format(time.RFC850))
+	}
 
 	// Close log file
 	closeLocalLogger()
@@ -205,7 +209,12 @@ func Npm() {
 	w := zip.NewWriter(outFile)
 
 	// Add files from temp dir to the archive.
-	addNpmFiles(w, tempWorkspace, "")
+	// If a framework was provided, zip up only the build folder
+	if framework != "" {
+		addNpmFiles(w, tempWorkspace+"build/", "")
+	} else {
+		addNpmFiles(w, tempWorkspace, "")
+	}
 
 	err = w.Close()
 	if err != nil {

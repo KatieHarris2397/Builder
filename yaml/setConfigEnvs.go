@@ -57,6 +57,18 @@ func ConfigEnvs(byi interface{}) {
 		os.Setenv("BUILDER_PROJECT_TYPE", "")
 	}
 
+	//check for framework
+	if val, ok := bldyml["framework"]; ok {
+		_, present := os.LookupEnv("BUILDER_FRAMEWORK")
+		if !present {
+			//convert val interface{} to string to be set as env var
+			valStr := fmt.Sprintf("%v", val)
+			os.Setenv("BUILDER_FRAMEWORK", valStr)
+		}
+	} else {
+		os.Setenv("BUILDER_FRAMEWORK", "")
+	}
+
 	//check for different dir name to store builds
 	if val, ok := bldyml["buildsdir"]; ok {
 		_, present := os.LookupEnv("BUILDER_BUILDS_DIR")
